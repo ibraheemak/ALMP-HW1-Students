@@ -4,87 +4,20 @@ from typing import List, Tuple
 import math
 from Plotter import Plotter
 from shapely.geometry.polygon import Polygon, LineString
+from shapely.geometry import MultiPoint
 
 
-def ensure_ccw(points):
-    area = 0
-    for i in range(len(points)):
-        x1,y1 = points[i]
-        x2,y2 = points[(i+1) % len(points)]
-        area += x1*y2 - x2*y1
-    if area < 0:
-        points.reverse()
-    return points
 
-def rotate_to_lowest(poly):
-    """Rotate polygon so polygon[0] is the lowest vertex."""
-    lowest = min(range(len(poly)), key=lambda i: (poly[i][1], poly[i][0]))
-    return poly[lowest:] + poly[:lowest]
+def minkowski_sum_convex_hull(P, R):
+    sums = []
+    for (px, py) in P:
+        for (qx, qy) in R:
+            sums.append((px + qx, py + qy))
 
+    hull = MultiPoint(sums).convex_hull
 
-def edge_angle(p, q):
-    ang = math.atan2(q[1]-p[1], q[0]-p[0])
-    if ang < 0:
-        ang += 2*math.pi
-    return ang
-
-
-def minkowski_sum_convex(P, Q):
-    """
-    Compute Minkowski sum of convex CCW polygons P and Q.
-    Returns list of vertices.
-    """
-
-    # rotate so each starts at lowest vertex
-    print("P before CCW:", P)
-    print("Q before CCW:", Q)
-    P = ensure_ccw(P)
-    Q = ensure_ccw(Q)
-    print("P after CCW:", P)
-    print("Q after CCW:", Q)
-
-    P = rotate_to_lowest(P)
-    Q = rotate_to_lowest(Q)
-
-    n = len(P)
-    m = len(Q)
-
-    # Extend by 2 extra vertices (line 2 in algorithm)
-    P_ext = P + [P[0], P[1]]
-    Q_ext = Q + [Q[0], Q[1]]
-
-    i = 0
-    j = 0
-    result = []
-
-
-    for _ in range(n + m):
-        print(f"Step {_}: i={i}, j={j}")
-        print(f"n, m", n, m)
-
-        vx, vy = P_ext[i]
-        wx, wy = Q_ext[j]
-        result.append((vx + wx, vy + wy))
-
-        print(f"i: {i}, j: {j}, added: ({vx + wx}, {vy + wy})")
-        angle_P = edge_angle(P_ext[i], P_ext[i+1])
-        angle_Q = edge_angle(Q_ext[j], Q_ext[j+1])
-
-        if angle_P < angle_Q:
-             if i < n:
-                i += 1
-        elif angle_P > angle_Q:
-             if j < m:
-                j += 1
-        else:
-            print("Equal angles")
-            if i < n:
-                i += 1
-            if j < m:
-                j += 1
-
-    return result
-
+    # Convert hull (Polygon) to list of coordinates
+    return list(hull.exterior.coords)[:-1]
 
 def get_minkowsky_sum(original_shape: Polygon, r: float) -> Polygon:
     """
@@ -104,7 +37,7 @@ def get_minkowsky_sum(original_shape: Polygon, r: float) -> Polygon:
         (0,  r)      
     ]
 
-    mink = minkowski_sum_convex(P, R)
+    mink = minkowski_sum_convex_hull(P, R)
 
     # Return as Shapely polygon
     return Polygon(mink)
