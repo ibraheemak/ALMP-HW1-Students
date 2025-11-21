@@ -31,10 +31,10 @@ def get_minkowsky_sum(original_shape: Polygon, r: float) -> Polygon:
 
     # Robot  R centered at origin
     R = [
-        (-r, 0),    
-        (0, -r),    
-        (r,  0),     
-        (0,  r)      
+        (-r, 0),
+        (0, -r),
+        (r,  0),
+        (0,  r)
     ]
 
     mink = minkowski_sum_convex_hull(P, R)
@@ -48,27 +48,44 @@ def side(a,b,p):
     (ax, ay) = a
     (bx, by) = b
     (px, py) = p
-    return (ay-by)*(bx-px) - (ax-bx)*(by-py)
+    return (ay - by) * (bx - px) - (ax - bx) * (by - py)
 
 def intersect(a,b,c,d):
     # returns true if the line segments ab and cd intersect.
     # the lines intersect iff both pairs are on opposite sides of both lines.
     # will always return false if any 3 points are on the same line.
-    # print all points
-    # print(a,b,c,d)
-    side1 = side(a,b,c)
-    side2 = side(a,b,d)
-    side3 = side(c,d,a)
-    side4 = side(c,d,b)
-    # print ((side1*side2 < 0) and (side3*side4 < 0))
-    return (side1*side2 < 0) and (side3*side4 < 0) # both pairs are on opposite sides of the other line
+    side1 = side(a, b, c)
+    side2 = side(a, b, d)
+    side3 = side(c, d, a)
+    side4 = side(c, d, b)
+    return (side1 * side2 < 0) and (side3 * side4 < 0)  # both pairs are on opposite sides of the other line
 
-def is_between(v,w,c):
-    # return true if c is on the line segment ab
+def is_between(v,w,c) -> bool:
+    # return true if c is on the line segment vw
     return side(v, w, c) == 0 and (
             (v[0] < c[0]) == (c[0] < w[0])) and (
             (v[1] < c[1]) == (c[1] < w[1]))
 
+def cross_poly_edge(v, w, n, j, coords) -> bool:
+    # edge case where obstacle is in poly1 or poly2 (the line of visibility is "inside" the polygon,
+    #   so it intersects another edge of the polygon. but it comes out exactly on another vertex, so it
+    #   is not discovered in our other checks because it is technically collinear):
+    for k in range(n - 1):
+        c = coords[k]
+        if is_between(v, w, c) and not (k == j - 1 or k == j or k == j + 1):
+            return True
+    return False
+
+def check_if_blocks(v, w, obstacle: Polygon) -> bool:
+    # check if line vw intersects any of the obstacles
+    coords = obstacle.exterior.coords
+    n = len(coords)
+    for k in range(n - 1):  # for edge in obstacle:
+        c = coords[k]
+        d = coords[k + 1]
+        if intersect(v, w, c, d):  # vw intersects cd
+            return True
+    return False
 
 def get_visibility_graph(obstacles: List[Polygon], source=None, dest=None) -> List[LineString]:
     """
@@ -78,52 +95,109 @@ def get_visibility_graph(obstacles: List[Polygon], source=None, dest=None) -> Li
     :param dest: The destination of the query. None for part 1.
     :return: A list of LineStrings holding the edges of the visibility graph
     """
-    # gameplan: for all lines:
-    #   for all poly in polygons:
-    #       check if all vertices in poly are on the same side. if they are, then that poly does not intersect the line.
-    vertices = []
-    edges = []
+    vertices: List[Tuple[float, float]] = [source, dest]
+    edges: List[LineString] = []
     # initialize vertices
     for poly in obstacles:
         for v in poly.exterior.coords:
             vertices.append(v)
     # iterate on all vertex pairs. add an edge if visible.
     for i, poly1 in enumerate(obstacles):
-        for poly2 in obstacles[i+1:]: # start from index after i
-            for j, v in enumerate(poly1.exterior.coords):
+        for poly2 in obstacles[i+1:]:  # start from index after i
+            for j, v in enumerate(poly1.exterior.coords):  # for every vertex in poly1
                 if j > 0:
-                    edges.append(LineString((poly1.exterior.coords[j-1], v)))
-                for l, w in enumerate(poly2.exterior.coords):
-                    visible = True
-                    for obstacle in obstacles: # may also collide with same poly so should check all polys
-                        # for line in poly:
+                    edges.append(LineString((poly1.exterior.coords[j-1], v)))  # add paths across the edges of the polygon
+                for l, w in enumerate(poly2.exterior.coords):  # for every vertex in poly2
+                    visible = True  # visible unless blocked
+                    # iterate on all line segments of all polygons to see if they block visibility
+                    for obstacle in obstacles:  # may also collide with vertex in the same poly so should check all polys
+                        if check_if_blocks(v, w, obstacle):
+                            visible = False
+                            break
+                        # edge case: check if line goes through vertex of poly1 or poly2
                         coords = obstacle.exterior.coords
                         n = len(coords)
-                        for i in range(n - 1):
-                            c = coords[i]
-                            d = coords[i + 1]
-                            if intersect(v, w, c, d):
-                                visible = False
-                                break
-                        # edge case where obstacle is poly1 or poly2:
-                        # if third point is on the line segment (side == 0 and between x and y coords of the pair):
-                        #   check that this or previous or next point is v or w (to avoid crossing the polygon in the middle)
-                        if obstacle == poly1:
-                            for k in range(n - 1):
-                                c = coords[k]
-                                if is_between(v, w, c) and not (k == j-1 or k == j or k == j+1):
-                                    visible = False
-                                    break
-                        if obstacle == poly2:
-                            for k in range(n - 1):
-                                c = coords[k]
-                                if is_between(v, w, c) and not (k == l - 1 or k == l or k == l + 1):
-                                    visible = False
-                                    break
+                        if (obstacle == poly1 and cross_poly_edge(v, w, n, j, coords)) or (
+                            obstacle == poly2 and cross_poly_edge(v, w, n, l, coords)):
+                            visible = False
+                            break
                     if visible:
                         edges.append(LineString((v, w)))
-    print("len edges = " + str(len(edges)))
+    # add edges for source and dest
+    if source and dest:
+        for poly in obstacles:
+            for v in poly.exterior.coords:
+                for w in [source, dest]:
+                    visible = True
+                    for obstacle in obstacles:
+                        if check_if_blocks(v, w, obstacle):
+                            visible = False
+                            break
+                    if visible:
+                        edges.append(LineString((v, w)))
+        # finally check source to dest visibility
+        visible_source_dest = True
+        for obstacle in obstacles:
+            if check_if_blocks(source, dest, obstacle):
+                visible_source_dest = False
+                break
+        if visible_source_dest:
+            edges.append(LineString((source, dest)))
     return edges
+
+
+def get_shortest_path(obstacles: List[Polygon], visibility_graph: List[LineString], source: Tuple[float, float], dest: Tuple[float, float]) -> Tuple[List[Tuple[float, float]], float]:
+    """
+    Get the shortest path from source to dest using Djikstra's algorithm
+    :return: A tuple of the list of points in the shortest path, and the cost of the path
+    """
+    # build list of edges with distances
+    edges = {}
+    for line in visibility_graph:
+        p1 = line.coords[0]
+        p2 = line.coords[1]
+        dist = math.dist(p1, p2)
+        if p1 not in edges:
+            edges[p1] = []
+        if p2 not in edges:
+            edges[p2] = []
+        edges[p1].append((p2, dist))
+        edges[p2].append((p1, dist))
+
+    # Dijkstra's algorithm. copied from wikipedia pseudocode
+    dist = {}
+    prev = {}
+    Q = set()  # priority queue
+    for v in obstacles:
+        for point in v.exterior.coords:
+            dist[point] = math.inf
+            prev[point] = None
+            if point != source:
+                Q.add(point)
+    # manually add source and dest
+    dist[source] = 0
+    prev[source] = None
+    dist[dest] = math.inf
+    prev[dest] = None
+    Q.add(source)
+    while Q:
+        u = min(Q, key=lambda vertex: dist[vertex])  # vertex in Q with smallest dist
+        Q.remove(u)
+        for (v, length) in edges.get(u, []):
+            alt = dist[u] + length
+            if alt < dist[v]:
+                dist[v] = alt
+                prev[v] = u
+
+    # reconstruct path
+    s = []
+    u = dest
+    # if us i in prev or u is source
+    if (u in prev and prev[u]) or u == source:
+        while u:
+            s.insert(0, u)
+            u = prev[u]
+    return s, dist[dest]
 
 
 def is_valid_file(parser, arg):
@@ -189,7 +263,7 @@ if __name__ == '__main__':
 
     lines = get_visibility_graph(c_space_obstacles, source, dest)
     #TODO: fill in the next line
-    shortest_path, cost = None, None
+    shortest_path, cost = get_shortest_path(c_space_obstacles, lines, source, dest)
 
 
     # step 4: Animate the shortest path
