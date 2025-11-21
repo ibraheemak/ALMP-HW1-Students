@@ -43,7 +43,33 @@ def get_minkowsky_sum(original_shape: Polygon, r: float) -> Polygon:
     return Polygon(mink)
 
 
-# TODO
+def side(a,b,p):
+    # calculates which side of the line ab p is on. 0 if collinear, positive and negative depends on which side of the line.
+    (ax, ay) = a
+    (bx, by) = b
+    (px, py) = p
+    return (ay-by)*(bx-px) - (ax-bx)*(by-py)
+
+def intersect(a,b,c,d):
+    # returns true if the line segments ab and cd intersect.
+    # the lines intersect iff both pairs are on opposite sides of both lines.
+    # will always return false if any 3 points are on the same line.
+    # print all points
+    # print(a,b,c,d)
+    side1 = side(a,b,c)
+    side2 = side(a,b,d)
+    side3 = side(c,d,a)
+    side4 = side(c,d,b)
+    # print ((side1*side2 < 0) and (side3*side4 < 0))
+    return (side1*side2 < 0) and (side3*side4 < 0) # both pairs are on opposite sides of the other line
+
+def is_between(v,w,c):
+    # return true if c is on the line segment ab
+    return side(v, w, c) == 0 and (
+            (v[0] < c[0]) == (c[0] < w[0])) and (
+            (v[1] < c[1]) == (c[1] < w[1]))
+
+
 def get_visibility_graph(obstacles: List[Polygon], source=None, dest=None) -> List[LineString]:
     """
     Get The visibility graph of a given map
@@ -52,7 +78,52 @@ def get_visibility_graph(obstacles: List[Polygon], source=None, dest=None) -> Li
     :param dest: The destination of the query. None for part 1.
     :return: A list of LineStrings holding the edges of the visibility graph
     """
-    raise NotImplementedError()
+    # gameplan: for all lines:
+    #   for all poly in polygons:
+    #       check if all vertices in poly are on the same side. if they are, then that poly does not intersect the line.
+    vertices = []
+    edges = []
+    # initialize vertices
+    for poly in obstacles:
+        for v in poly.exterior.coords:
+            vertices.append(v)
+    # iterate on all vertex pairs. add an edge if visible.
+    for i, poly1 in enumerate(obstacles):
+        for poly2 in obstacles[i+1:]: # start from index after i
+            for j, v in enumerate(poly1.exterior.coords):
+                if j > 0:
+                    edges.append(LineString((poly1.exterior.coords[j-1], v)))
+                for l, w in enumerate(poly2.exterior.coords):
+                    visible = True
+                    for obstacle in obstacles: # may also collide with same poly so should check all polys
+                        # for line in poly:
+                        coords = obstacle.exterior.coords
+                        n = len(coords)
+                        for i in range(n - 1):
+                            c = coords[i]
+                            d = coords[i + 1]
+                            if intersect(v, w, c, d):
+                                visible = False
+                                break
+                        # edge case where obstacle is poly1 or poly2:
+                        # if third point is on the line segment (side == 0 and between x and y coords of the pair):
+                        #   check that this or previous or next point is v or w (to avoid crossing the polygon in the middle)
+                        if obstacle == poly1:
+                            for k in range(n - 1):
+                                c = coords[k]
+                                if is_between(v, w, c) and not (k == j-1 or k == j or k == j+1):
+                                    visible = False
+                                    break
+                        if obstacle == poly2:
+                            for k in range(n - 1):
+                                c = coords[k]
+                                if is_between(v, w, c) and not (k == l - 1 or k == l or k == l + 1):
+                                    visible = False
+                                    break
+                    if visible:
+                        edges.append(LineString((v, w)))
+    print("len edges = " + str(len(edges)))
+    return edges
 
 
 def is_valid_file(parser, arg):
