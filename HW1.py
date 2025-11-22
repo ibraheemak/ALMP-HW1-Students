@@ -3,6 +3,7 @@ import os
 from typing import List, Tuple
 import math
 from Plotter import Plotter
+import shapely
 from shapely.geometry.polygon import Polygon, LineString
 from shapely.geometry import MultiPoint
 
@@ -43,49 +44,12 @@ def get_minkowsky_sum(original_shape: Polygon, r: float) -> Polygon:
     return Polygon(mink)
 
 
-def side(a,b,p):
-    # calculates which side of the line ab p is on. 0 if collinear, positive and negative depends on which side of the line.
-    (ax, ay) = a
-    (bx, by) = b
-    (px, py) = p
-    return (ay - by) * (bx - px) - (ax - bx) * (by - py)
-
-def intersect(a,b,c,d):
-    # returns true if the line segments ab and cd intersect.
-    # the lines intersect iff both pairs are on opposite sides of both lines.
-    # will always return false if any 3 points are on the same line.
-    side1 = side(a, b, c)
-    side2 = side(a, b, d)
-    side3 = side(c, d, a)
-    side4 = side(c, d, b)
-    return (side1 * side2 < 0) and (side3 * side4 < 0)  # both pairs are on opposite sides of the other line
-
-def is_between(v,w,c) -> bool:
-    # return true if c is on the line segment vw
-    return side(v, w, c) == 0 and (
-            (v[0] < c[0]) == (c[0] < w[0])) and (
-            (v[1] < c[1]) == (c[1] < w[1]))
-
-def cross_poly_edge(v, w, n, j, coords) -> bool:
-    # edge case where obstacle is in poly1 or poly2 (the line of visibility is "inside" the polygon,
-    #   so it intersects another edge of the polygon. but it comes out exactly on another vertex, so it
-    #   is not discovered in our other checks because it is technically collinear):
-    for k in range(n - 1):
-        c = coords[k]
-        if is_between(v, w, c) and not (k == j - 1 or k == j or k == j + 1):
-            return True
-    return False
-
-def check_if_blocks(v, w, obstacle: Polygon) -> bool:
-    # check if line vw intersects any of the obstacles
-    coords = obstacle.exterior.coords
-    n = len(coords)
-    for k in range(n - 1):  # for edge in obstacle:
-        c = coords[k]
-        d = coords[k + 1]
-        if intersect(v, w, c, d):  # vw intersects cd
-            return True
-    return False
+def line_is_not_blocked(line: LineString, obstacles: List[Polygon]) -> bool:
+    # check if line intersects any of the obstacles
+    for obstacle in obstacles:  # may also collide with vertex in the same poly so should check all polys
+        if shapely.intersects(obstacle, line) and not shapely.touches(obstacle, line):
+            return False
+    return True
 
 def get_visibility_graph(obstacles: List[Polygon], source=None, dest=None) -> List[LineString]:
     """
@@ -95,54 +59,22 @@ def get_visibility_graph(obstacles: List[Polygon], source=None, dest=None) -> Li
     :param dest: The destination of the query. None for part 1.
     :return: A list of LineStrings holding the edges of the visibility graph
     """
-    vertices: List[Tuple[float, float]] = [source, dest]
+    vertices: List[Tuple[float, float]] = []
+    if source and dest:
+        vertices.append(source)
+        vertices.append(dest)
     edges: List[LineString] = []
     # initialize vertices
     for poly in obstacles:
         for v in poly.exterior.coords:
             vertices.append(v)
-    # iterate on all vertex pairs. add an edge if visible.
-    for i, poly1 in enumerate(obstacles):
-        for poly2 in obstacles[i+1:]:  # start from index after i
-            for j, v in enumerate(poly1.exterior.coords):  # for every vertex in poly1
-                if j > 0:
-                    edges.append(LineString((poly1.exterior.coords[j-1], v)))  # add paths across the edges of the polygon
-                for l, w in enumerate(poly2.exterior.coords):  # for every vertex in poly2
-                    visible = True  # visible unless blocked
-                    # iterate on all line segments of all polygons to see if they block visibility
-                    for obstacle in obstacles:  # may also collide with vertex in the same poly so should check all polys
-                        if check_if_blocks(v, w, obstacle):
-                            visible = False
-                            break
-                        # edge case: check if line goes through vertex of poly1 or poly2
-                        coords = obstacle.exterior.coords
-                        n = len(coords)
-                        if (obstacle == poly1 and cross_poly_edge(v, w, n, j, coords)) or (
-                            obstacle == poly2 and cross_poly_edge(v, w, n, l, coords)):
-                            visible = False
-                            break
-                    if visible:
-                        edges.append(LineString((v, w)))
-    # add edges for source and dest
-    if source and dest:
-        for poly in obstacles:
-            for v in poly.exterior.coords:
-                for w in [source, dest]:
-                    visible = True
-                    for obstacle in obstacles:
-                        if check_if_blocks(v, w, obstacle):
-                            visible = False
-                            break
-                    if visible:
-                        edges.append(LineString((v, w)))
-        # finally check source to dest visibility
-        visible_source_dest = True
-        for obstacle in obstacles:
-            if check_if_blocks(source, dest, obstacle):
-                visible_source_dest = False
-                break
-        if visible_source_dest:
-            edges.append(LineString((source, dest)))
+    # add edges between all pairs of vertices if visible
+    for v in vertices:
+        for w in vertices:
+            if v != w:
+                line = LineString((v, w))
+                if line_is_not_blocked(line, obstacles):
+                    edges.append(line)
     return edges
 
 
@@ -212,6 +144,46 @@ def get_points_and_dist(line):
     return source, dist
 
 
+def run_test(test: dict):
+    """
+    Run a test case from a test dictionary.
+    :param test: Dictionary with keys:
+        - 'robot': dict with 'center' (list) and 'd' (float)
+        - 'query': list [x, y] for destination
+        - 'obstacles': list of polygons (each polygon is list of [x, y] points)
+    :return: Dictionary with 'path' (list of points), 'cost' (float), and visualization data
+    """
+    # Extract test data
+    robot_center = test['robot']['center']
+    dist = test['robot']['d']
+    source = tuple(robot_center)
+    dest = tuple(test['query'])
+    obstacles_data = test['obstacles']
+    
+    # Convert obstacles to Shapely polygons
+    workspace_obstacles = [Polygon(obs) for obs in obstacles_data]
+    
+    # Step 1: Compute C-space obstacles
+    c_space_obstacles = [get_minkowsky_sum(p, dist) for p in workspace_obstacles]
+    
+    # Step 2: Build visibility graph with source and dest
+    lines = get_visibility_graph(c_space_obstacles, source, dest)
+    
+    # Step 3: Find shortest path
+    shortest_path, cost = get_shortest_path(c_space_obstacles, lines, source, dest)
+    
+    return {
+        'path': shortest_path,
+        'cost': cost,
+        'workspace_obstacles': workspace_obstacles,
+        'c_space_obstacles': c_space_obstacles,
+        'visibility_graph': lines,
+        'source': source,
+        'dest': dest,
+        'dist': dist
+    }
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("Robot", help="A file that holds the starting position of the robot, and the distance from the center of the robot to any of its vertices")
@@ -262,7 +234,6 @@ if __name__ == '__main__':
         dest = tuple(map(float, f.readline().split(',')))
 
     lines = get_visibility_graph(c_space_obstacles, source, dest)
-    #TODO: fill in the next line
     shortest_path, cost = get_shortest_path(c_space_obstacles, lines, source, dest)
 
 
