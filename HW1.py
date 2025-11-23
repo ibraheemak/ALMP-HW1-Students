@@ -61,20 +61,21 @@ def get_visibility_graph(obstacles: List[Polygon], source=None, dest=None) -> Li
     """
     vertices: List[Tuple[float, float]] = []
     if source and dest:
-        vertices.append(source)
-        vertices.append(dest)
+        if source not in vertices:
+            vertices.append(source)
+        if dest not in vertices:
+            vertices.append(dest)
     edges: List[LineString] = []
     # initialize vertices
     for poly in obstacles:
         for v in poly.exterior.coords:
             vertices.append(v)
     # add edges between all pairs of vertices if visible
-    for v in vertices:
-        for w in vertices:
-            if v != w:
-                line = LineString((v, w))
-                if line_is_not_blocked(line, obstacles):
-                    edges.append(line)
+    for i, v in enumerate(vertices):
+        for w in vertices[i+1:]:
+            line = LineString((v, w))
+            if line_is_not_blocked(line, obstacles):
+                edges.append(line)
     return edges
 
 
